@@ -37,18 +37,20 @@
 1. **建立 App 金鑰**：打開 appstoreconnect.apple.com →「使用者與存取權限」→「整合」→「App Store Connect API」→ 新增金鑰，存取權選「管理」。記下**金鑰 ID**、**Issuer ID**，然後下載 `.p8` 檔（只能下載一次）。
 2. **把 .p8 轉成文字**：到「檔案」App 長按這個檔案 →「重新命名」，把副檔名改成 `.txt` → 打開後全選、拷貝。
 3. **查 Team ID**：developer.apple.com/account →「會員資格詳細資訊」→「團隊 ID」。
-4. **建立 App 紀錄**：App Store Connect →「App」→「＋ 新增 App」，平台選 iOS，名稱填 HomeCam（重複的話加字），套件識別碼填 `com.你的名字.homecam`。這個 App 只會在 TestFlight 內部測試使用，不會上架。
-5. **在 GitHub repo 填設定**（Safari 開 repo →Settings）：
+4. **註冊套件 ID**：developer.apple.com/account/resources/identifiers/add/bundleId →選 App IDs、App →「Explicit」，填 `com.dannnnnkh.homecam`（不用勾任何功能）→ Register。
+5. **建立 App 紀錄**：App Store Connect →「App」→「＋ 新增 App」，平台選 iOS，名稱填 HomeCam（重複的話加字），套件 ID 選第 4 步建立的那個，SKU 隨便填。這個 App 只會在 TestFlight 內部測試使用，不會上架。
+   接著到這個 App 的「TestFlight」→「內部測試」→ 新增群組，把自己加進去，並開啟「自動發佈」。
+6. **在 GitHub repo 填設定**（Safari 開 repo →Settings）：
    - Secrets and variables → Actions → **Secrets**：
      - `ASC_KEY_ID`：金鑰 ID
      - `ASC_ISSUER_ID`：Issuer ID
      - `ASC_KEY_P8`：貼上 .p8 的完整內容（包含 BEGIN/END 那兩行）
    - **Variables**：
      - `TEAM_ID`：團隊 ID
-     - `BUNDLE_ID`：第 4 步填的套件識別碼
-6. 刪掉「檔案」App 裡的 .p8 / .txt，避免金鑰外流。
-7. 打開 GitHub App → 這個 repo →「Actions」→「Build & TestFlight」→「Run workflow」。
-8. 約 20–30 分鐘後，App Store 下載「TestFlight」，裡面就會出現 HomeCam，點「安裝」。
+     - `BUNDLE_ID`：`com.dannnnnkh.homecam`
+7. 刪掉「檔案」App 裡的 .p8 / .txt，避免金鑰外流。
+8. 打開 GitHub App → 這個 repo →「Actions」→「Build & TestFlight」→「Run workflow」。
+9. 約 20–30 分鐘後，App Store 下載「TestFlight」，裡面就會出現 HomeCam，點「安裝」。
 
 **之後更新**：程式有修改時會自動重新編譯；也可以手動按「Run workflow」。TestFlight 會通知你更新，點一下就好。
 
