@@ -70,7 +70,16 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           mkdir -p ~/.appstoreconnect/private_keys
-          printf '%s\n' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey.p8
+          # 容錯：貼上時少了 BEGIN/END 兩行、多了空白或換行都自動修正
+          python3 - <<'PY'
+          import os, re, textwrap
+          raw = os.environ["ASC_KEY_P8"]
+          body = re.sub(r"-----(BEGIN|END) PRIVATE KEY-----", "", raw)
+          body = re.sub(r"[^A-Za-z0-9+/=]", "", body)
+          pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(body, 64)) + "\n-----END PRIVATE KEY-----\n"
+          open(os.path.expanduser("~/.appstoreconnect/private_keys/AuthKey.p8"), "w").write(pem)
+          print("金鑰長度（字元）:", len(body))
+          PY
           sed "s/__TEAM_ID__/$TEAM_ID/" ci/ExportOptions.plist > ExportOptions.plist
 
       - name: 封存（雲端自動簽署）
