@@ -18,7 +18,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' && secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && true }}
+      HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' && (secrets.ASC_KEY_ID != '' || vars.ASC_KEY_ID != '') }}
+      # Issuer ID / Key ID 只是識別碼，不是密鑰；真正的私鑰只放在 Secrets 的 ASC_KEY_P8
+      ASC_ISSUER: ${{ secrets.ASC_ISSUER_ID || 'b13c0ae3-b040-4e81-9a17-12ff7746883c' }}
+      ASC_KEY: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
       TEAM_ID: ${{ vars.TEAM_ID || 'LGFH6TK8SV' }}
       BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.dannnnnkh.homecam' }}
     steps:
@@ -79,8 +82,8 @@ jobs:
             -clonedSourcePackagesDirPath SourcePackages \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey.p8 \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            -authenticationKeyID "$ASC_KEY" \
+            -authenticationKeyIssuerID "$ASC_ISSUER" \
             DEVELOPMENT_TEAM="$TEAM_ID" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             | tee archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
@@ -94,8 +97,8 @@ jobs:
             -exportOptionsPlist ExportOptions.plist -exportPath build/export \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey.p8 \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" | tee export.log | tail -20
+            -authenticationKeyID "$ASC_KEY" \
+            -authenticationKeyIssuerID "$ASC_ISSUER" | tee export.log | tail -20
           grep -qE "EXPORT SUCCEEDED|Upload succeeded" export.log
           echo "✅ 已上傳。約 5–15 分鐘後，iPhone 的 TestFlight App 會出現更新。" >> $GITHUB_STEP_SUMMARY
 
