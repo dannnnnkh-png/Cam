@@ -1,0 +1,7 @@
+HomeCam.xcodeproj/
+SourcePackages/
+build/
+*.log
+.DS_Store
+EngineTests/test_engine
+*.p8

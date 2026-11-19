@@ -1,0 +1,102 @@
+# 在 GitHub 的 Mac 雲端主機上編譯 HomeCam，並上傳到 TestFlight。
+# iPhone 上操作：GitHub App →這個 repo →Actions →「Build & TestFlight」→ Run workflow
+# 沒設定 Apple 金鑰時只做「編譯檢查」，不會上傳。
+name: Build & TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' && secrets.ASC_KEY_ID != '' && secrets.ASC_ISSUER_ID != '' && vars.TEAM_ID != '' }}
+      TEAM_ID: ${{ vars.TEAM_ID }}
+      BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.example.homecam' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 選擇 Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app /Applications/Xcode_16.4*.app /Applications/Xcode_16.3*.app 2>/dev/null | sort -V | tail -1)
+          echo "使用 $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: 產生 Xcode 專案
+        run: |
+          brew install xcodegen >/dev/null
+          xcodegen generate
+
+      - name: 快取套件（FFmpegKit 很大）
+        uses: actions/cache@v4
+        with:
+          path: SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+
+      - name: 編譯檢查（未簽署）
+        if: env.HAS_KEY != 'true'
+        run: |
+          set -o pipefail
+          xcodebuild build -project HomeCam.xcodeproj -scheme HomeCam \
+            -destination 'generic/platform=iOS' -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: 準備 App Store Connect 金鑰
+        if: env.HAS_KEY == 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s\n' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey.p8
+          sed "s/__TEAM_ID__/$TEAM_ID/" ci/ExportOptions.plist > ExportOptions.plist
+
+      - name: 封存（雲端自動簽署）
+        if: env.HAS_KEY == 'true'
+        run: |
+          set -o pipefail
+          xcodebuild archive -project HomeCam.xcodeproj -scheme HomeCam \
+            -destination 'generic/platform=iOS' -archivePath build/HomeCam.xcarchive \
+            -clonedSourcePackagesDirPath SourcePackages \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey.p8 \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            | tee archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
+          grep -q "ARCHIVE SUCCEEDED" archive.log
+
+      - name: 上傳到 TestFlight
+        if: env.HAS_KEY == 'true'
+        run: |
+          set -o pipefail
+          xcodebuild -exportArchive -archivePath build/HomeCam.xcarchive \
+            -exportOptionsPlist ExportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey.p8 \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" | tee export.log | tail -20
+          grep -qE "EXPORT SUCCEEDED|Upload succeeded" export.log
+          echo "✅ 已上傳。約 5–15 分鐘後，iPhone 的 TestFlight App 會出現更新。" >> $GITHUB_STEP_SUMMARY
+
+      - name: 失敗時保留紀錄
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: "*.log"
+          retention-days: 7
+
+      - name: 清除金鑰
+        if: always()
+        run: rm -rf ~/.appstoreconnect ExportOptions.plist

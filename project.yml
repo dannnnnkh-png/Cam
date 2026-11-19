@@ -1,0 +1,74 @@
+# 產生 Xcode 專案：brew install xcodegen && xcodegen generate
+name: HomeCam
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  FFmpegKit:
+    url: https://github.com/kingslay/FFmpegKit.git
+    exactVersion: 9.0.2
+
+targets:
+  HomeCam:
+    type: application
+    platform: iOS
+    scheme: {}            # 產生共用 scheme，雲端編譯需要
+    sources:
+      - path: HomeCam
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: FFmpegKit
+        product: FFmpegKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.homecam   # ← 改成你自己的，例如 com.kh.homecam
+        DEVELOPMENT_TEAM: ""                              # ← 填你的 Team ID（或在 Xcode Signing 頁選）
+        CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: HomeCam/Engine/HomeCam-Bridging-Header.h
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(BUILT_PRODUCTS_DIR)/PackageFrameworks"]
+        GCC_C_LANGUAGE_STANDARD: gnu11
+        CLANG_WARN_DOCUMENTATION_COMMENTS: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        DEAD_CODE_STRIPPING: YES
+    info:
+      path: HomeCam/Info.plist
+      properties:
+        CFBundleDisplayName: HomeCam
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes:
+          - audio
+        NSLocalNetworkUsageDescription: HomeCam 需要搜尋並連線你家 WiFi 裡的攝影機。所有連線只在家中網路內進行。
+        NSSpeechRecognitionUsageDescription: 把攝影機收到的聲音轉成逐字稿。預設只在 iPhone 上辨識，不會上傳。
+        NSFaceIDUsageDescription: 用 Face ID 鎖住 HomeCam，避免別人看到家裡的畫面。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIFileSharingEnabled: false
+        LSSupportsOpeningDocumentsInPlace: false
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: HomeCam/HomeCam.entitlements
+      properties: {}
+      # Apple 核准 multicast 權限後，可加入以下這行讓 ONVIF 多播搜尋生效（未核准前加了會無法簽署）：
+      # com.apple.developer.networking.multicast: true
