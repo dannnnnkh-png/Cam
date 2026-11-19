@@ -45,9 +45,7 @@
      - `ASC_KEY_ID`：金鑰 ID
      - `ASC_ISSUER_ID`：Issuer ID
      - `ASC_KEY_P8`：貼上 .p8 的完整內容（包含 BEGIN/END 那兩行）
-   - **Variables**：
-     - `TEAM_ID`：團隊 ID
-     - `BUNDLE_ID`：`com.dannnnnkh.homecam`
+   （Team ID 與套件 ID 已寫在設定檔裡，不用另外填）
 7. 刪掉「檔案」App 裡的 .p8 / .txt，避免金鑰外流。
 8. 打開 GitHub App → 這個 repo →「Actions」→「Build & TestFlight」→「Run workflow」。
 9. 約 20–30 分鐘後，App Store 下載「TestFlight」，裡面就會出現 HomeCam，點「安裝」。
