@@ -36,11 +36,21 @@ jobs:
           brew install xcodegen >/dev/null
           xcodegen generate
 
-      - name: 快取套件（FFmpegKit 很大）
-        uses: actions/cache@v4
+      - name: 還原套件快取（FFmpegKit 很大）
+        uses: actions/cache/restore@v4
         with:
           path: SourcePackages
           key: spm-${{ hashFiles('project.yml') }}
+
+      - name: 下載套件
+        run: xcodebuild -resolvePackageDependencies -project HomeCam.xcodeproj -scheme HomeCam -clonedSourcePackagesDirPath SourcePackages | tail -5
+
+      - name: 儲存套件快取
+        uses: actions/cache/save@v4
+        with:
+          path: SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+        continue-on-error: true
 
       - name: 編譯檢查（未簽署）
         if: env.HAS_KEY != 'true'

@@ -51,7 +51,7 @@ enum Discovery {
             if let s = map[d.host] { d.rtspPort = s.rtspPort; d.source = "ONVIF + RTSP" }
             map[d.host] = d
         }
-        return map.values.sorted { ipKey($0.host) < ipKey($1.host) }
+        return map.values.sorted { ipKey($0.host).lexicographicallyPrecedes(ipKey($1.host)) }
     }
 
     private static func ipKey(_ ip: String) -> [Int] { ip.split(separator: ".").map { Int($0) ?? 0 } }

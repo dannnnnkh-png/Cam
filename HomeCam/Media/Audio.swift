@@ -38,7 +38,7 @@ final class AudioOut {
                   AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
             self.queue.async { self.refresh(force: true) }        // 來電等中斷結束後自動恢復
         }
-        NotificationCenter.default.addObserver(forName: AVAudioEngine.configurationChangeNotification, object: engine, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.queue.async { self.refresh(force: true) }
         }
