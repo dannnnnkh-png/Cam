@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel   # arm64 Mac 主機目前容量不足會排不到；Intel 主機一樣能編譯 iPhone App
     timeout-minutes: 60
     env:
       HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' }}
