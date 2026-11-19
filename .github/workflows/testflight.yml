@@ -18,10 +18,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' && (secrets.ASC_KEY_ID != '' || vars.ASC_KEY_ID != '') }}
+      HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' }}
       # Issuer ID / Key ID 只是識別碼，不是密鑰；真正的私鑰只放在 Secrets 的 ASC_KEY_P8
       ASC_ISSUER: ${{ secrets.ASC_ISSUER_ID || 'b13c0ae3-b040-4e81-9a17-12ff7746883c' }}
-      ASC_KEY: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID }}
+      ASC_KEY: ${{ secrets.ASC_KEY_ID || vars.ASC_KEY_ID || 'FZ9S5ED9K0XD' }}
       TEAM_ID: ${{ vars.TEAM_ID || 'LGFH6TK8SV' }}
       BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.dannnnnkh.homecam' }}
     steps:
