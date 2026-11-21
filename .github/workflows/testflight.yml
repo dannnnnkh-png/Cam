@@ -82,6 +82,35 @@ jobs:
           PY
           sed "s/__TEAM_ID__/$TEAM_ID/" ci/ExportOptions.plist > ExportOptions.plist
 
+      - name: 檢查 Apple 金鑰與 App 設定
+        if: env.HAS_KEY == 'true'
+        run: |
+          pip3 install --quiet --break-system-packages pyjwt cryptography 2>/dev/null || pip3 install --quiet pyjwt cryptography
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error, jwt
+          key = open(os.path.expanduser("~/.appstoreconnect/private_keys/AuthKey.p8")).read()
+          kid, iss, bundle = os.environ["ASC_KEY"], os.environ["ASC_ISSUER"], os.environ["BUNDLE_ID"]
+          tok = jwt.encode({"iss": iss, "iat": int(time.time()), "exp": int(time.time()) + 600, "aud": "appstoreconnect-v1"},
+                           key, algorithm="ES256", headers={"kid": kid, "typ": "JWT"})
+          def get(path):
+              req = urllib.request.Request("https://api.appstoreconnect.apple.com" + path, headers={"Authorization": "Bearer " + tok})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.load(r)
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode(errors="ignore")
+                  return e.code, body
+          code, data = get("/v1/apps?limit=200")
+          print(f"金鑰 ID：{kid}　Issuer：{iss[:8]}…　API 回應：{code}")
+          if code != 200:
+              print("❌ 金鑰驗證失敗：金鑰 ID、Issuer ID 或 ASC_KEY_P8 內容不一致（或金鑰已撤銷）")
+              print(str(data)[:300]); sys.exit(1)
+          apps = [(a["attributes"]["bundleId"], a["attributes"]["name"]) for a in data["data"]]
+          print("✅ 金鑰有效。帳號內的 App：", apps)
+          if not any(b == bundle for b, _ in apps):
+              print(f"❌ App Store Connect 還沒有套件 ID 為 {bundle} 的 App，請先建立"); sys.exit(1)
+          print(f"✅ 找到 {bundle}")
+          PY
+
       - name: 封存（雲端自動簽署）
         if: env.HAS_KEY == 'true'
         run: |
