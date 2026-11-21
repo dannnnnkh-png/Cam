@@ -128,6 +128,16 @@ jobs:
             | tee archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
           grep -q "ARCHIVE SUCCEEDED" archive.log
 
+      - name: 預先簽署內嵌框架（讓匯出時能正確換成發佈簽章）
+        if: env.HAS_KEY == 'true'
+        run: |
+          APP=build/HomeCam.xcarchive/Products/Applications/HomeCam.app
+          for f in "$APP"/Frameworks/*.framework "$APP"/Frameworks/*.dylib; do
+            [ -e "$f" ] && codesign --force --sign - --timestamp=none "$f"
+          done
+          codesign --force --sign - --timestamp=none --preserve-metadata=entitlements "$APP" || codesign --force --sign - "$APP"
+          codesign -dv "$APP" 2>&1 | head -3
+
       - name: 雲端簽署並上傳到 TestFlight
         if: env.HAS_KEY == 'true'
         run: |
