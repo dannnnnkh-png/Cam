@@ -110,6 +110,10 @@ final class ONVIFClient {
 
     @discardableResult
     func call(_ url: URL, _ body: String, auth: Bool = true) async throws -> XNode {
+        guard NetGuard.allows(url) else {
+            SecurityCenter.shared.log(.blockedHost, .critical, "ONVIF 要求連往非家中網路位址，已拒絕")
+            throw ONVIFError(message: "已阻擋：只能連家中區域網路")
+        }
         let env = """
         <?xml version="1.0" encoding="UTF-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">\
         <s:Header>\(auth ? securityHeader() : "")</s:Header><s:Body>\(body)</s:Body></s:Envelope>
@@ -176,9 +180,30 @@ final class ONVIFClient {
         return c.url ?? u
     }
 
-    func deviceInfo() async -> (manufacturer: String, model: String) {
-        guard let r = try? await call(deviceURL, "<GetDeviceInformation xmlns=\"\(Self.nsDevice)\"/>") else { return ("", "") }
-        return (r.value("Manufacturer"), r.value("Model"))
+    func deviceInfo() async -> (manufacturer: String, model: String, serial: String) {
+        guard let r = try? await call(deviceURL, "<GetDeviceInformation xmlns=\"\(Self.nsDevice)\"/>") else { return ("", "", "") }
+        return (r.value("Manufacturer"), r.value("Model"), r.value("SerialNumber"))
+    }
+
+    // MARK: 帳號管理（防止別人繞過 App 直接登入攝影機）
+
+    struct CamUser: Hashable { var name: String; var level: String }
+
+    func users() async throws -> [CamUser] {
+        let r = try await call(deviceURL, "<GetUsers xmlns=\"\(Self.nsDevice)\"/>")
+        return r.all("User").map { CamUser(name: $0.value("Username"), level: $0.value("UserLevel")) }
+    }
+
+    /// 修改攝影機帳號密碼（ONVIF SetUser）
+    func setPassword(user: String, level: String, newPassword: String) async throws {
+        let body = """
+        <SetUser xmlns="\(Self.nsDevice)"><User>\
+        <Username xmlns="\(Self.nsSchema)">\(Self.esc(user))</Username>\
+        <Password xmlns="\(Self.nsSchema)">\(Self.esc(newPassword))</Password>\
+        <UserLevel xmlns="\(Self.nsSchema)">\(Self.esc(level.isEmpty ? "Administrator" : level))</UserLevel>\
+        </User></SetUser>
+        """
+        try await call(deviceURL, body)
     }
 
     // MARK: Media
@@ -264,6 +289,7 @@ struct CameraSetupResult {
     var ptz: Bool
     var brand: String
     var sdPlayback: CameraConfig.SDPlayback
+    var serial: String = ""
 }
 
 enum CameraSetup {
@@ -287,7 +313,7 @@ enum CameraSetup {
                 if let sub { subURL = (try? await c.streamURI(token: sub.token)) ?? "" }
                 let hasPTZ = c.ptzURL != nil && profiles.contains { $0.ptz }
                 return CameraSetupResult(mainURL: mainURL, subURL: subURL, onvifURL: s, profileToken: main.token,
-                                         ptz: hasPTZ, brand: brand, sdPlayback: guessSD(brand))
+                                         ptz: hasPTZ, brand: brand, sdPlayback: guessSD(brand), serial: info.serial)
             } catch let e as ONVIFError {
                 if e.isAuth { throw e }
                 last = e

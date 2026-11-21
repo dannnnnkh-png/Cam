@@ -52,6 +52,12 @@ struct RootView: View {
                     .tabItem { Label("設定", systemImage: "gearshape") }.tag(4)
             }
 
+            // 停機中：解除前只能看到這個畫面
+            if model.settings.lockdownActive {
+                NavigationStack { LockdownView() }
+                    .transition(.opacity)
+            }
+
             // 隱私遮罩：切到多工畫面時，系統截圖只會看到這個，不會看到家裡畫面
             if phase != .active || model.locked {
                 PrivacyCover(showUnlock: model.locked && phase == .active)
@@ -59,6 +65,20 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) { ToastView() }
+        .alert(SecurityCenter.shared.pendingDecision?.title ?? "偵測到異常", isPresented: Binding(
+            get: { SecurityCenter.shared.pendingDecision != nil && !model.locked && phase == .active },
+            set: { if !$0 { SecurityCenter.shared.pendingDecision = nil } })) {
+            Button("立即停機", role: .destructive) {
+                let a = SecurityCenter.shared.pendingDecision
+                model.lockdown(reason: a?.title ?? "使用者選擇停機")
+                if let a { SecurityCenter.shared.markHandled(a.id) }
+            }
+            Button("先不要", role: .cancel) {
+                if let a = SecurityCenter.shared.pendingDecision { SecurityCenter.shared.markHandled(a.id) }
+            }
+        } message: {
+            Text("\(SecurityCenter.shared.pendingDecision?.detail ?? "")\n\n要立即停機嗎？（切斷所有攝影機、停止錄影）")
+        }
         .modifier(AppTextSize(option: model.settings.textSize))
         .animation(.snappy, value: model.toast)
     }

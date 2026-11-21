@@ -38,13 +38,17 @@ struct CameraConfig: Codable, Identifiable, Hashable {
     var brand: String = ""
     var enabled: Bool = true
     var recordMode: RecordMode = .motion
-    var recordHighQuality: Bool = true // 手機錄影用主碼流
+    var recordHighQuality: Bool = true // true：唯一的連線用主碼流（高畫質）；false：用子碼流（省電）
     var motion: Bool = true
     var motionSensitivity: Int = 50
     var transcribe: Bool = false
     var sdPlayback: SDPlayback = .none
+    // 安全：攝影機身分釘選
+    var serial: String = ""            // ONVIF 序號（新增時記錄，之後每次連線比對）
+    var pinnedVideo: String = ""       // 串流指紋：編碼＋解析度
 
-    var liveURL: String { subURL.isEmpty ? mainURL : subURL }
+    /// 每台攝影機只開這一條連線（看畫面、偵測、聲音、錄影共用）
+    var streamURL: String { (recordHighQuality || subURL.isEmpty) ? mainURL : subURL }
 }
 
 struct AppSettings: Codable, Equatable {
@@ -52,7 +56,6 @@ struct AppSettings: Codable, Equatable {
     var appLock: Bool = true
     var lockGraceSeconds: Int = 0
     var hideNotificationContent: Bool = true
-    var excludeFromBackup: Bool = true
     var speechOnDeviceOnly: Bool = true
     var blurWhenCaptured: Bool = true
     // 外觀
@@ -70,6 +73,11 @@ struct AppSettings: Codable, Equatable {
     var motionCooldownSeconds: Int = 60
     var notifyKeywords: Bool = true
     var keywords: [String] = ["救命", "小偷", "失火", "help"]
+    // 安全防護
+    var autoLockdown: Bool = true      // 嚴重異常自動停機
+    var aiReview: Bool = true          // 裝置端 AI 判讀安全紀錄
+    var lockdownActive: Bool = false
+    var lockdownReason: String = ""
 }
 
 struct CameraEvent: Codable, Identifiable, Hashable {

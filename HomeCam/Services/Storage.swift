@@ -1,7 +1,8 @@
 import Foundation
 
 /// 所有資料都在 App 的私有沙盒內（Application Support），其他 App 讀不到，也不開放「檔案」App 存取。
-/// 檔案以 iOS 資料保護加密：手機鎖定時無法讀取既有檔案（值守模式仍可寫入新錄影）。
+/// 設定、事件、逐字稿、截圖、安全紀錄：用裝置綁定金鑰（Vault）AES-GCM 加密。
+/// 錄影：iOS 硬體資料保護。全部強制不進 iCloud / 電腦備份。
 enum Storage {
     static let root: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -13,14 +14,24 @@ enum Storage {
     static var events: URL { root.appendingPathComponent("events", isDirectory: true) }
     static var configFile: URL { root.appendingPathComponent("cameras.json") }
     static var settingsFile: URL { root.appendingPathComponent("settings.json") }
+    static var security: URL { root.appendingPathComponent("security", isDirectory: true) }
+    static var bindingMarker: URL { root.appendingPathComponent("binding.bin") }
 
-    static func prepare(excludeFromBackup: Bool) {
+    /// 第一次加密前的舊版明文資料可讀一次（之後一律只讀加密資料）
+    static var allowPlaintextMigration = false
+
+    @discardableResult
+    static func prepare() -> Vault.BindingResult {
         let fm = FileManager.default
-        for d in [root, recordings, snapshots, transcripts, events] {
+        let hadData = fm.fileExists(atPath: configFile.path) || fm.fileExists(atPath: settingsFile.path)
+        for d in [root, recordings, snapshots, transcripts, events, security] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true,
                                     attributes: [.protectionKey: FileProtectionType.completeUnlessOpen])
         }
-        setExcludedFromBackup(excludeFromBackup)
+        setExcludedFromBackup(true)
+        let r = Vault.checkBinding(marker: bindingMarker, hasExistingData: hadData)
+        allowPlaintextMigration = (r == .fresh)
+        return r
     }
 
     static func setExcludedFromBackup(_ exclude: Bool) {
@@ -41,6 +52,31 @@ enum Storage {
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 
+    /// 加密後逐行追加
+    static func appendSealed(line: String, to url: URL) {
+        guard let sealed = Vault.sealLine(line) else { return }
+        append(line: sealed, to: url)
+    }
+
+    /// 讀取加密的逐行檔
+    static func readSealedLines(_ url: URL) -> [String] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap { Vault.openLine($0) }
+    }
+
+    static func writeSealed(_ data: Data, to url: URL) {
+        if let s = Vault.seal(data) { write(s, to: url) }
+    }
+
+    static func readSealed(_ url: URL) -> Data? {
+        guard let d = try? Data(contentsOf: url) else { return nil }
+        if let p = Vault.open(d) { return p }
+        return allowPlaintextMigration ? d : nil
+    }
+
+    /// 截圖（加密存放）
+    static func readSnapshot(_ name: String) -> Data? { readSealed(snapshots.appendingPathComponent(name)) }
+
     static func append(line: String, to url: URL) {
         let data = Data((line + "\n").utf8)
         if let h = try? FileHandle(forWritingTo: url) {
@@ -55,7 +91,7 @@ enum Storage {
     // MARK: 設定（缺少的欄位用預設值補上，App 更新後舊設定仍可讀）
 
     static func load<T: Codable>(_ type: T.Type, from url: URL, default def: T) -> T {
-        guard let data = try? Data(contentsOf: url) else { return def }
+        guard let data = readSealed(url) else { return def }
         return merge(data, default: def) ?? def
     }
 
@@ -77,7 +113,7 @@ enum Storage {
     }
 
     static func loadCameras() -> [CameraConfig] {
-        guard let data = try? Data(contentsOf: configFile),
+        guard let data = readSealed(configFile),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return [] }
         return arr.compactMap { item in
             guard let d = try? JSONSerialization.data(withJSONObject: item) else { return nil }
@@ -88,7 +124,7 @@ enum Storage {
     static func save<T: Encodable>(_ value: T, to url: URL) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let d = try? enc.encode(value) { write(d, to: url) }
+        if let d = try? enc.encode(value) { writeSealed(d, to: url) }
     }
 
     // MARK: 錄影檔
@@ -155,6 +191,16 @@ enum Storage {
     /// 一鍵清除所有資料
     static func wipeAll() {
         try? FileManager.default.removeItem(at: root)
+        clearTemp()
         Keychain.deleteAll()
+        Vault.destroyKey()
+    }
+
+    /// 匯出用的暫存明文檔，每次啟動清掉
+    static func clearTemp() {
+        let tmp = FileManager.default.temporaryDirectory
+        for f in (try? FileManager.default.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? [] {
+            try? FileManager.default.removeItem(at: f)
+        }
     }
 }

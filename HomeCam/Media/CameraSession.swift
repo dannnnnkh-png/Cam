@@ -82,10 +82,13 @@ final class CameraSession: Identifiable {
 
     @ObservationIgnored weak var model: AppModel?
     @ObservationIgnored let transcriber = Transcriber()
-    @ObservationIgnored private var live: EngineHandle?
-    @ObservationIgnored private var rec: EngineHandle?
+    @ObservationIgnored private var live: EngineHandle?        // 每台攝影機只有這一條連線
     @ObservationIgnored private var liveURL = ""
-    @ObservationIgnored private var recURL = ""
+    @ObservationIgnored var suspended = false                   // 記憶卡回放時暫停即時連線（維持單一連線）
+    @ObservationIgnored private var blockedReported = false
+    @ObservationIgnored private var authReported = false
+    @ObservationIgnored private var streamChangeReported = false
+    @ObservationIgnored private var identityChecked = false
     @ObservationIgnored private let displays = NSHashTable<AVSampleBufferDisplayLayer>.weakObjects()
     @ObservationIgnored private let lock = NSLock()
     @ObservationIgnored private var latestFrame: CVPixelBuffer?
@@ -116,13 +119,11 @@ final class CameraSession: Identifiable {
         URLCredential.inject(url, user: config.username, password: Keychain.password(for: config.id))
     }
 
-    private var recordsOnMain: Bool { config.recordHighQuality && !config.subURL.isEmpty }
-
     // MARK: 需求計算：依照「有沒有人在看 / 值守 / 偵測 / 逐字稿 / 錄影」決定要開哪些連線
 
     func update(appActive: Bool, guardOn: Bool) {
         let c = config
-        guard c.enabled else { stopEngines(); return }
+        guard c.enabled, !suspended, !(model?.settings.lockdownActive ?? false) else { stopEngines(); return }
         let monitoring = appActive || guardOn
         let watch = viewers > 0 && appActive
         let motion = c.motion && monitoring
@@ -130,39 +131,29 @@ final class CameraSession: Identifiable {
         let continuous = c.recordMode == .continuous && guardOn
         let motionRecArmed = motion && c.recordMode == .motion
         let wantRecording = recordReason == "manual" || continuous || (recordReason == "motion" && recording)
+        let needLive = watch || motion || stt || listening || wantRecording || motionRecArmed
 
-        let needRecEngine = recordsOnMain && (wantRecording || motionRecArmed)
-        let needLive = watch || motion || stt || listening || (!recordsOnMain && (wantRecording || motionRecArmed))
-
-        // 即時連線（子碼流）
         if needLive {
-            let url = credentialed(c.liveURL)
+            // 連線白名單：只連家中區域網路的位址
+            guard NetGuard.allows(url: c.streamURL) else {
+                if !blockedReported {
+                    blockedReported = true
+                    SecurityCenter.shared.log(.blockedHost, .critical, "串流位址不是家中區域網路，已拒絕連線", camera: c.name)
+                }
+                stopEngines()
+                return
+            }
+            let url = credentialed(c.streamURL)
             if live == nil || url != liveURL {
                 live?.shutdown()
                 liveURL = url
+                identityChecked = false
                 live = EngineHandle(url: url, session: self, recordEngine: false)
                 live?.start()
             }
         } else if live != nil {
             live?.shutdown(); live = nil
             DispatchQueue.main.async { self.state = HC_STATE_STOPPED; self.motionActive = false }
-        }
-        // 錄影專用連線（主碼流，只轉存不解碼，幾乎不耗電）
-        if needRecEngine {
-            let url = credentialed(c.mainURL)
-            if rec == nil || url != recURL {
-                rec?.shutdown()
-                recURL = url
-                rec = EngineHandle(url: url, session: self, recordEngine: true)
-                if let p = rec?.ptr {
-                    hc_engine_set_video_enabled(p, 0)
-                    hc_engine_set_audio_enabled(p, 0)
-                    hc_engine_set_motion(p, 0, 0)
-                }
-                rec?.start()
-            }
-        } else if rec != nil {
-            rec?.shutdown(); rec = nil
         }
 
         if let p = live?.ptr {
@@ -203,7 +194,6 @@ final class CameraSession: Identifiable {
 
     func stopEngines() {
         live?.shutdown(); live = nil
-        rec?.shutdown(); rec = nil
         if transcriberRunning { transcriber.stop(); transcriberRunning = false }
         if listening { setListening(false) }
         state = HC_STATE_STOPPED
@@ -248,12 +238,11 @@ final class CameraSession: Identifiable {
         recordReason = reason
         recording = true
         requestUpdate()
-        guard let p = (recordsOnMain ? rec : live)?.ptr else { return }
+        guard let p = live?.ptr else { return }
         hc_engine_start_recording(p, dir, config.id, seg, reason == "motion" ? post : 0)
     }
 
     func stopRecording() {
-        if let p = rec?.ptr { hc_engine_stop_recording(p) }
         if let p = live?.ptr { hc_engine_stop_recording(p) }
         recording = false
         recordReason = ""
@@ -269,8 +258,9 @@ final class CameraSession: Identifiable {
             kbps = info.kbps
             if info.width > 0 { resolution = "\(info.width)×\(info.height)" }
             codec = cString(info.video_codec)
+            checkStreamFingerprint()
         }
-        if recording, let p = (recordsOnMain ? rec : live)?.ptr {
+        if recording, let p = live?.ptr {
             var ri = HCInfo()
             hc_engine_get_info(p, &ri)
             if ri.recording == 0 && recordReason == "motion" {      // 移動錄影時間到自動結束
@@ -279,6 +269,24 @@ final class CameraSession: Identifiable {
                 requestUpdate()
             }
         }
+    }
+
+    /// 串流指紋（編碼＋解析度）：第一次記住，之後改變就記錄為安全事件（可能被替換或韌體遭竄改）
+    private func checkStreamFingerprint() {
+        guard model != nil, !codec.isEmpty, !resolution.isEmpty, state == HC_STATE_PLAYING else { return }
+        let fp = "\(codec) \(resolution)"
+        if config.pinnedVideo.isEmpty {
+            var c = config; c.pinnedVideo = fp; model?.updateCamera(c)
+        } else if fp != config.pinnedVideo && !streamChangeReported {
+            streamChangeReported = true
+            SecurityCenter.shared.log(.streamChanged, .medium, "原本 \(config.pinnedVideo)，現在 \(fp)", camera: config.name)
+        }
+    }
+
+    /// 使用者確認攝影機設定是自己改的之後，重新記住串流指紋
+    func resetFingerprint() {
+        var c = config; c.pinnedVideo = ""; model?.updateCamera(c)
+        streamChangeReported = false
     }
 
     // MARK: 截圖
@@ -298,12 +306,24 @@ final class CameraSession: Identifiable {
         DispatchQueue.main.async {
             self.state = s
             self.message = msg
+            let name = self.config.name
             if s == HC_STATE_PLAYING {
                 if !self.wasPlaying && self.everPlayed { self.model?.addEvent(self, .online, "已重新連線") }
+                if !self.wasPlaying { SecurityCenter.shared.log(.cameraConnected, .info, "已連線", camera: name) }
                 self.wasPlaying = true
                 self.everPlayed = true
+                self.authReported = false
+                if !self.identityChecked {
+                    self.identityChecked = true
+                    self.model?.verifyIdentity(self)
+                }
             } else if s == HC_STATE_RETRYING || s == HC_STATE_AUTH_FAILED {
                 if self.wasPlaying || s == HC_STATE_AUTH_FAILED { self.model?.addEvent(self, .offline, "離線：\(msg)") }
+                if self.wasPlaying { SecurityCenter.shared.log(.cameraDisconnected, .info, msg, camera: name) }
+                if s == HC_STATE_AUTH_FAILED && !self.authReported && self.model != nil {
+                    self.authReported = true
+                    SecurityCenter.shared.log(.authFailure, .high, "攝影機拒絕目前的帳號密碼", camera: name)
+                }
                 self.wasPlaying = false
                 self.hasVideo = false
             }

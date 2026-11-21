@@ -7,6 +7,7 @@ struct TranscriptsView: View {
     @State private var query = ""
     @State private var lines: [TranscriptLine] = []
     @State private var days: [String] = []
+    @State private var exportURL: IdentifiedURL?
 
     var body: some View {
         List {
@@ -38,10 +39,17 @@ struct TranscriptsView: View {
         .searchable(text: $query, prompt: "搜尋所有逐字稿")
         .onSubmit(of: .search) { lines = TranscriptLog.search(query, cameraIDs: model.cameras.map(\.id)) }
         .toolbar {
-            if !cameraID.isEmpty, FileManager.default.fileExists(atPath: TranscriptLog.textFile(cameraID: cameraID, day: day).path) {
-                ShareLink(item: TranscriptLog.textFile(cameraID: cameraID, day: day)) { Image(systemName: "square.and.arrow.up") }
+            if !cameraID.isEmpty, TranscriptLog.hasDay(cameraID: cameraID, day: day) {
+                Button {
+                    // 逐字稿平常加密存放；你按分享時才暫時產生明文檔
+                    if let url = TranscriptLog.exportText(cameraID: cameraID, day: day) {
+                        SecurityCenter.shared.log(.export, .low, "分享 \(day) 的逐字稿", camera: model.cameras.first { $0.id == cameraID }?.name ?? "")
+                        exportURL = IdentifiedURL(url: url)
+                    }
+                } label: { Image(systemName: "square.and.arrow.up") }
             }
         }
+        .sheet(item: $exportURL) { ShareSheet(items: [$0.url]) }
         .onAppear {
             if cameraID.isEmpty || !model.cameras.contains(where: { $0.id == cameraID }) { cameraID = model.cameras.first?.id ?? "" }
             reload()
@@ -105,7 +113,7 @@ struct EventsView: View {
         List {
             ForEach(model.events.reversed().filter { filter == nil || $0.kind == filter }.prefix(300)) { e in
                 HStack(alignment: .top, spacing: 14) {
-                    if let snap = e.snapshot, let img = UIImage(contentsOfFile: Storage.snapshots.appendingPathComponent(snap).path) {
+                    if let snap = e.snapshot, let data = Storage.readSnapshot(snap), let img = UIImage(data: data) {
                         Image(uiImage: img).resizable().scaledToFill().frame(width: 112, height: 63).clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.hairline))
@@ -175,4 +183,22 @@ struct EventsView: View {
 struct IdentifiedImage: Identifiable {
     let id = UUID()
     let image: UIImage
+}
+
+struct IdentifiedURL: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// 系統分享面板（分享完自動刪除暫存的明文檔）
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        vc.completionWithItemsHandler = { _, _, _, _ in
+            for case let u as URL in items { try? FileManager.default.removeItem(at: u) }
+        }
+        return vc
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }

@@ -128,6 +128,9 @@ struct AddCameraView: View {
                 let m = URLCredential.strip(manualMain.trimmingCharacters(in: .whitespaces))
                 let user = m.user.isEmpty ? username : m.user
                 let pwd = m.password.isEmpty ? password : m.password
+                guard NetGuard.allows(url: m.url), manualSub.isEmpty || NetGuard.allows(url: manualSub) else {
+                    throw ONVIFError(message: "只能加入家中區域網路（例如 192.168.x.x）的攝影機")
+                }
                 let r = await Probe.run(URLCredential.inject(m.url, user: user, password: pwd), timeoutMs: 8000)
                 guard r.code == HC_OK else { throw ONVIFError(message: "無法開啟串流：\(Probe.message(r.code))") }
                 cfg.mainURL = m.url
@@ -137,6 +140,9 @@ struct AddCameraView: View {
                 password = pwd
             } else {
                 let h = host.trimmingCharacters(in: .whitespaces)
+                guard NetGuard.isPrivate(host: h) else {
+                    throw ONVIFError(message: "只能加入家中區域網路（例如 192.168.x.x）的攝影機")
+                }
                 var result: CameraSetupResult?
                 var errors: [String] = []
                 do {
@@ -166,6 +172,7 @@ struct AddCameraView: View {
                 cfg.ptz = r.ptz
                 cfg.brand = r.brand
                 cfg.sdPlayback = r.sdPlayback
+                cfg.serial = r.serial
             }
             cfg.name = name.isEmpty ? (cfg.brand.isEmpty ? "攝影機 \(cfg.host)" : cfg.brand) : name
             model.addCamera(cfg, password: password)

@@ -104,6 +104,9 @@ struct PlayerView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // 分享是你主動按才會發生；檔案不會自動上傳到任何地方
                 ShareLink(item: recording.url) { Image(systemName: "square.and.arrow.up") }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        SecurityCenter.shared.log(.export, .low, "分享錄影 \(recording.url.lastPathComponent)")
+                    })
                 Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
             }
         }
@@ -143,6 +146,9 @@ struct SDCardPlayback: View {
                         DatePicker("時間", selection: $start, in: ...Date())
                         Button {
                             playing?.stopEngines()
+                            // 單一連線：回放期間暫停這台的即時連線
+                            model.sessions[cam.id]?.suspended = true
+                            model.refreshDemand()
                             var c = cam
                             c.id = cam.id
                             c.mainURL = playbackURL(cam, start)
@@ -166,7 +172,7 @@ struct SDCardPlayback: View {
                                     Label(s.listening ? "靜音" : "聲音", systemImage: s.listening ? "speaker.wave.2" : "speaker.slash")
                                 }
                                 Spacer()
-                                Button("停止") { s.stopEngines(); playing = nil }
+                                Button("停止") { s.stopEngines(); playing = nil; resumeLive() }
                             }
                         }
                     }
@@ -174,8 +180,13 @@ struct SDCardPlayback: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .onDisappear { playing?.stopEngines(); playing = nil }
-        .onChange(of: cameraID) { _, _ in playing?.stopEngines(); playing = nil }
+        .onDisappear { playing?.stopEngines(); playing = nil; resumeLive() }
+        .onChange(of: cameraID) { _, _ in playing?.stopEngines(); playing = nil; resumeLive() }
+    }
+
+    private func resumeLive() {
+        for s in model.sessions.values where s.suspended { s.suspended = false }
+        model.refreshDemand()
     }
 
     private func playbackURL(_ c: CameraConfig, _ t: Date) -> String {

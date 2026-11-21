@@ -17,6 +17,10 @@ struct SettingsView: View {
             } header: { Text("外觀") }
 
             Section {
+                NavigationLink { SecurityCenterView() } label: {
+                    SettingRow(icon: "lock.shield.fill", tint: SecurityCenter.shared.anomalies.contains { !$0.handled } ? .red : .green,
+                               title: "安全中心", detail: "異常偵測、AI 判讀、停機、安全紀錄")
+                }
                 NavigationLink { SecurityCheckView() } label: {
                     SettingRow(icon: "checkmark.shield.fill", tint: .green, title: "隱私與安全檢查", detail: "檢查手機密碼、攝影機弱密碼與網路建議")
                 }
@@ -35,8 +39,8 @@ struct SettingsView: View {
                 Toggle(isOn: $model.settings.hideNotificationContent) {
                     SettingRow(icon: "bell.badge.slash.fill", tint: .red, title: "隱藏通知內容", detail: "鎖定畫面只顯示「有新的事件」")
                 }
-                Toggle(isOn: $model.settings.excludeFromBackup) {
-                    SettingRow(icon: "icloud.slash.fill", tint: .blue, title: "不備份到 iCloud", detail: "錄影與逐字稿只留在這支手機")
+                SettingRow(icon: "iphone.gen3", tint: .blue, title: "資料綁定這支 iPhone", detail: "加密金鑰只在這台手機，永不備份、無法搬到別台") {
+                    Image(systemName: "checkmark").foregroundStyle(Theme.live)
                 }
                 Toggle(isOn: $model.settings.speechOnDeviceOnly) {
                     SettingRow(icon: "waveform.badge.mic", tint: .orange, title: "語音只在手機上辨識", detail: "聲音不會送到任何伺服器")
@@ -139,6 +143,9 @@ struct CameraEditView: View {
     let cameraID: String
     @State private var newPassword = ""
     @State private var confirmDelete = false
+    @State private var confirmRotate = false
+    @State private var working = false
+    @State private var audit: String = ""
 
     var body: some View {
         if let cam = model.cameras.first(where: { $0.id == cameraID }) {
@@ -146,7 +153,7 @@ struct CameraEditView: View {
                 Section {
                     TextField("名稱", text: bind(cam, \.name))
                     Toggle("啟用", isOn: bind(cam, \.enabled))
-                    Toggle("手機錄影用高畫質（主碼流）", isOn: bind(cam, \.recordHighQuality))
+                    Toggle("使用高畫質（主碼流）", isOn: bind(cam, \.recordHighQuality))
                     Picker("記憶卡回放格式", selection: bind(cam, \.sdPlayback)) {
                         ForEach(CameraConfig.SDPlayback.allCases) { Text($0.label).tag($0) }
                     }
@@ -157,6 +164,12 @@ struct CameraEditView: View {
                     LabeledContent("品牌", value: cam.brand.isEmpty ? "—" : cam.brand)
                     LabeledContent("方式", value: cam.onvifURL.isEmpty ? "RTSP" : "ONVIF\(cam.ptz ? " + 雲台" : "")")
                     LabeledContent("子碼流", value: cam.subURL.isEmpty ? "無" : "有")
+                    LabeledContent("連線數", value: "1（看、聽、偵測、錄影共用）")
+                    LabeledContent("身分序號", value: cam.serial.isEmpty ? "未取得（RTSP 攝影機）" : "已釘選 …\(cam.serial.suffix(4))")
+                    LabeledContent("串流指紋", value: cam.pinnedVideo.isEmpty ? "尚未記錄" : cam.pinnedVideo)
+                    if !cam.pinnedVideo.isEmpty {
+                        Button("我改了攝影機畫質，重新記住指紋") { model.sessions[cam.id]?.resetFingerprint() }
+                    }
                     SecureField("更換密碼", text: $newPassword)
                     if !newPassword.isEmpty {
                         ForEach(PasswordCheck.problems(newPassword, user: cam.username), id: \.self) {
@@ -172,15 +185,71 @@ struct CameraEditView: View {
                     }
                 }
                 Section {
+                    if !cam.onvifURL.isEmpty {
+                        Button { confirmRotate = true } label: {
+                            SettingRow(icon: "key.horizontal.fill", tint: .orange, title: "換成只有這支 iPhone 知道的密碼",
+                                       detail: "產生 16 字元隨機密碼並寫入攝影機，只存在這支手機；別人（包括原廠 App）都無法再用舊密碼登入")
+                        }
+                        .disabled(working)
+                        Button {
+                            Task { await runAudit(cam) }
+                        } label: {
+                            SettingRow(icon: "person.2.badge.key.fill", tint: .indigo, title: "檢查攝影機上的帳號",
+                                       detail: audit.isEmpty ? "找出 App 以外的帳號（可能是後門）" : audit)
+                        }
+                        .disabled(working)
+                    }
+                    if working { HStack { ProgressView(); Text("處理中…").foregroundStyle(Theme.secondary) } }
+                } header: { Text("防止別人繞過 App") } footer: {
+                    Text("App 無法從外部封鎖攝影機，最有效的是讓別人「沒有密碼」。也請到攝影機設定：關閉雲端/P2P、開啟 IP 白名單只允許這支手機（\(Discovery.localIPv4() ?? "手機 IP")）、停用不用的帳號。")
+                }
+                Section {
                     Button("移除這台攝影機", role: .destructive) { confirmDelete = true }
                 } footer: { Text("錄影檔會保留，可在「回放」刪除。") }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.bg)
             .navigationTitle(cam.name)
+            .confirmationDialog("把「\(cam.name)」的密碼換成隨機強密碼？", isPresented: $confirmRotate, titleVisibility: .visible) {
+                Button("更換密碼") { Task { await rotate(cam) } }
+            } message: {
+                Text("新密碼只存在這支 iPhone、不會顯示。之後原廠 App 會登不進去；要恢復只能把攝影機重置。換之前會先驗證，失敗會自動換回原密碼。")
+            }
             .confirmationDialog("移除「\(cam.name)」？", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("移除", role: .destructive) { model.removeCamera(cam.id); dismiss() }
             }
+        }
+    }
+
+    private func rotate(_ cam: CameraConfig) async {
+        guard await AppLock.authenticate(reason: "更換攝影機密碼") else { return }
+        working = true
+        model.sessions[cam.id]?.stopEngines()
+        let r = await CameraHardening.rotatePassword(cam)
+        working = false
+        switch r {
+        case .success:
+            SecurityCenter.shared.log(.settingChanged, .info, "攝影機密碼已換成隨機強密碼（只存在這支手機）", camera: cam.name)
+            model.toast = "已更換，現在只有這支 iPhone 知道密碼"
+        case .failed(let msg):
+            SecurityCenter.shared.log(.settingChanged, .low, "更換攝影機密碼失敗：\(msg)", camera: cam.name)
+            model.toast = msg
+        }
+        model.refreshDemand()
+    }
+
+    private func runAudit(_ cam: CameraConfig) async {
+        working = true
+        let r = await CameraHardening.auditUsers(cam)
+        working = false
+        guard let r else { audit = "無法讀取帳號（攝影機可能不支援）"; return }
+        if r.others.isEmpty {
+            audit = "✅ 只有 App 使用的帳號「\(cam.username)」"
+        } else {
+            let names = r.others.map { "\($0.name)（\($0.level)）" }.joined(separator: "、")
+            audit = "⚠️ 另有帳號：\(names)。不是你建立的請到攝影機設定刪除"
+            SecurityCenter.shared.log(.settingChanged, .medium, "攝影機上有其他帳號：\(names)", camera: cam.name)
+            SecurityCenter.shared.raise(.medium, "攝影機上有其他帳號", names, camera: cam.name)
         }
     }
 
@@ -203,7 +272,7 @@ struct SecurityCheckView: View {
                 check(AppLock.deviceHasPasscode, "手機已設定密碼", "到「設定 → Face ID 與密碼」設定，否則 App 鎖與資料加密都無效")
                 check(model.settings.appLock, "App 鎖已開啟", "別人拿到解鎖的手機也打不開 HomeCam")
                 check(model.settings.hideNotificationContent, "通知不顯示內容與截圖", "鎖定畫面上的通知可能被旁人看到")
-                check(model.settings.excludeFromBackup, "錄影不進 iCloud 備份", "資料只留在這支手機")
+                check(true, "資料綁定這支 iPhone", "加密金鑰只存在這台手機，不備份、無法搬到別台")
                 check(model.settings.speechOnDeviceOnly, "語音只在手機上辨識", "關閉時，聲音可能送到 Apple 伺服器辨識")
             }
             Section("攝影機密碼") {
