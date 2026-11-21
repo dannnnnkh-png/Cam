@@ -111,7 +111,7 @@ jobs:
           print(f"✅ 找到 {bundle}")
           PY
 
-      - name: 封存（雲端自動簽署）
+      - name: 封存（先不簽署，避免每台雲端主機產生開發憑證）
         if: env.HAS_KEY == 'true'
         run: |
           set -o pipefail
@@ -123,11 +123,12 @@ jobs:
             -authenticationKeyID "$ASC_KEY" \
             -authenticationKeyIssuerID "$ASC_ISSUER" \
             DEVELOPMENT_TEAM="$TEAM_ID" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-            CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             | tee archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
           grep -q "ARCHIVE SUCCEEDED" archive.log
 
-      - name: 上傳到 TestFlight
+      - name: 雲端簽署並上傳到 TestFlight
         if: env.HAS_KEY == 'true'
         run: |
           set -o pipefail
